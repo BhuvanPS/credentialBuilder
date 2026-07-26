@@ -38,3 +38,10 @@ export const analyzeBlobUrl = async (url) =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url }),
   });
+
+export const generateSummary = async (payload) =>
+  request("/generate-summary", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });

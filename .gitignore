@@ -1,5 +1,6 @@
 # Environment and secrets
 backend/.env
+.env
 
 # Downloaded or generated files
 linkedin-extract/downloads/

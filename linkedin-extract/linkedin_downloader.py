@@ -1,16 +1,12 @@
 import os
 import re
 import time
-
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-
 from webdriver_manager.chrome import ChromeDriverManager
-
 
 PROFILE_PATH = "/Users/bhuvanps/LinkedInAutomationChrome"
 PROFILE_NAME = "Default"
@@ -18,13 +14,10 @@ PROFILE_NAME = "Default"
 DOWNLOAD_FOLDER = os.path.abspath("downloads")
 
 def get_profile_slug(url):
-
     match = re.search(r"/in/([^/?]+)", url)
-
     return match.group(1) if match else "profile"
 
 def create_driver():
-
     os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
     options = webdriver.ChromeOptions()
@@ -109,9 +102,7 @@ def wait_for_pdf(timeout=60):
                 return pdf
 
         time.sleep(1)
-
     return None
-
 
 def download_profile_pdf(url):
 
