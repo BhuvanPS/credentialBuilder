@@ -1,37 +1,48 @@
 import { useState } from "react";
-import { uploadDocument, extractDocument, generateCredential } from "./api";
-
-const steps = ["Upload", "Extract", "Review", "Generate"];
+import { uploadDocument, downloadLinkedInProfile, uploadToAzure, analyzeBlobUrl } from "./api";
 
 export default function App() {
-  const [step, setStep] = useState(0);
   const [file, setFile] = useState(null);
   const [fileName, setFileName] = useState("");
   const [uploadId, setUploadId] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [fields, setFields] = useState({ full_name: "", title: "", summary: "", url: "" });
-  const [autoFilled, setAutoFilled] = useState({ full_name: false, title: false, summary: false, url: false });
-  const [credential, setCredential] = useState(null);
+  const [linkedinUrl, setLinkedinUrl] = useState("");
+  const [downloadStatus, setDownloadStatus] = useState("");
+  const [downloadPath, setDownloadPath] = useState("");
+  const [azureStatus, setAzureStatus] = useState("");
+  const [azureUrl, setAzureUrl] = useState("");
+  const [analysisStatus, setAnalysisStatus] = useState("");
+  const [analysisResult, setAnalysisResult] = useState(null);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleUpload = async () => {
+  const handleFileChange = (event) => {
+    const selected = event.target.files?.[0] ?? null;
+    setFile(selected);
+    setFileName(selected?.name || "");
+    setUploadId("");
+    setAzureStatus("");
+    setAzureUrl("");
+    setDownloadStatus("");
+    setDownloadPath("");
+  };
+
+  const handleUploadResume = async () => {
     if (!file) {
-      setError("Select a PDF or DOCX file first.");
-      return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      setError("File must be 10MB or smaller.");
+      setError("Select a resume file first.");
       return;
     }
 
     setError("");
     setLoading(true);
+    setAzureStatus("");
+    setAzureUrl("");
 
     try {
       const result = await uploadDocument(file);
       setUploadId(result.file_id || "");
       setFileName(result.filename || file.name);
-      setStep(1);
+      setDownloadStatus("Resume uploaded to backend.");
+      setDownloadPath(result.filename || file.name);
     } catch (err) {
       setError(err.message || "Upload failed.");
     } finally {
@@ -39,164 +50,149 @@ export default function App() {
     }
   };
 
-  const handleExtract = async () => {
-    if (!uploadId) {
-      setError("Missing uploaded file.");
+  const handleFetchProfile = async () => {
+    if (!linkedinUrl.trim()) {
+      setError("Enter a LinkedIn profile URL first.");
       return;
     }
 
     setError("");
     setLoading(true);
+    setAzureStatus("");
+    setAzureUrl("");
+    setDownloadStatus("Fetching profile PDF...");
+    setDownloadPath("");
 
     try {
-      const result = await extractDocument({ file_id: uploadId });
-      setFields({
-        full_name: result.full_name || "",
-        title: result.title || "",
-        summary: result.summary || "",
-        url: result.url || "",
-      });
-      setAutoFilled({
-        full_name: Boolean(result.full_name),
-        title: Boolean(result.title),
-        summary: Boolean(result.summary),
-        url: Boolean(result.url),
-      });
-      setStep(2);
+      const result = await downloadLinkedInProfile(linkedinUrl.trim());
+      setDownloadStatus("Profile PDF downloaded.");
+      setDownloadPath(result.file_path || "");
+      setFileName(result.file_path || "LinkedIn profile");
+      setUploadId(result.file_id || "");
     } catch (err) {
-      setError(err.message || "Extraction failed.");
+      setError(err.message || "Profile download failed.");
+      setDownloadStatus("Failed to download profile.");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleGenerate = async () => {
+  const handleUploadAzure = async () => {
+    if (!uploadId) {
+      setError("No file available to upload to Azure.");
+      return;
+    }
+
     setError("");
     setLoading(true);
+    setAzureStatus("Uploading to Azure...");
+    setAzureUrl("");
+    setAnalysisStatus("");
+    setAnalysisResult(null);
 
     try {
-      const result = await generateCredential(fields);
-      setCredential(result.credential || fields);
-      setStep(3);
+      const result = await uploadToAzure({ file_id: uploadId, file_name: fileName });
+      setAzureStatus("Uploaded to Azure Blob Storage.");
+      setAzureUrl(result.sas_url || result.blob_url || "");
+      setAnalysisStatus(result.sas_url ? "Ready for analysis." : "Azure upload succeeded, but no SAS URL available for analysis.");
     } catch (err) {
-      setError(err.message || "Generate failed.");
+      setError(err.message || "Azure upload failed.");
+      setAzureStatus("Azure upload failed.");
+      setAnalysisStatus("");
     } finally {
       setLoading(false);
     }
   };
 
-  const updateField = (key, value) => {
-    setFields((curr) => ({ ...curr, [key]: value }));
+  const handleAnalyzeBlob = async () => {
+    if (!azureUrl) {
+      setError("No Azure blob URL is available for analysis.");
+      return;
+    }
+
+    setError("");
+    setLoading(true);
+    setAnalysisStatus("Analyzing uploaded document...");
+    setAnalysisResult(null);
+
+    try {
+      const analysis = await analyzeBlobUrl(azureUrl);
+      setAnalysisStatus("Analysis complete.");
+      setAnalysisResult(analysis);
+    } catch (err) {
+      setError(err.message || "Analysis failed.");
+      setAnalysisStatus("Analysis failed.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="app-shell">
-      <div className="progress-bar" aria-label="Progress">
-        {steps.map((label, index) => (
-          <div key={label} className={`progress-step ${index <= step ? "active" : ""}`}>
-            <span className="progress-number">{index + 1}</span>
-            <span>{label}</span>
-          </div>
-        ))}
-      </div>
-
       <div className="page-card">
-        <h1>myCredentials</h1>
-        <p className="page-copy">Upload a resume and turn it into a consistent HNP credential summary card.</p>
+        <h1>Credential Builder</h1>
+        <p className="page-copy">Upload a resume or fetch a LinkedIn profile PDF, then save it to Azure Blob Storage.</p>
 
         {error && <div className="error-banner">{error}</div>}
 
-        {step === 0 && (
-          <div className="section">
-            <label className="input-file">
-              <span>Choose PDF or DOCX</span>
-              <input
-                type="file"
-                accept=".pdf,.docx"
-                onChange={(event) => {
-                  const selected = event.target.files?.[0] ?? null;
-                  setFile(selected);
-                  setFileName(selected?.name || "");
-                }}
-              />
-            </label>
-            <p className="hint">Maximum size 10MB.</p>
-          </div>
-        )}
+        <div className="section">
+          <label className="input-file">
+            <span>Upload resume</span>
+            <input type="file" accept=".pdf,.docx" onChange={handleFileChange} />
+          </label>
+          <button className="primary" onClick={handleUploadResume} disabled={!file || loading}>
+            {loading && downloadStatus === "" ? "Uploading…" : "Upload Resume"}
+          </button>
+        </div>
 
-        {step === 1 && (
-          <div className="section">
-            <p className="hint">Ready to extract from <strong>{fileName}</strong>.</p>
-            <button className="primary" onClick={handleExtract} disabled={loading}>
-              {loading ? "Extracting…" : "Extract content"}
-            </button>
-          </div>
-        )}
+        <div className="divider">or</div>
 
-        {step === 2 && (
-          <div className="section form-grid">
-            {[
-              { key: "full_name", label: "Full name" },
-              { key: "title", label: "Title" },
-              { key: "summary", label: "Summary", textarea: true },
-              { key: "url", label: "URL" },
-            ].map((field) => (
-              <label key={field.key} className="field-row">
-                <div className="field-header">
-                  <span>{field.label}</span>
-                  <span className={`badge ${autoFilled[field.key] ? "filled" : "pending"}`}>
-                    {autoFilled[field.key] ? "✓ auto-filled" : "○ needs input"}
-                  </span>
-                </div>
-                {field.textarea ? (
-                  <textarea
-                    value={fields[field.key]}
-                    onChange={(event) => updateField(field.key, event.target.value)}
-                  />
-                ) : (
-                  <input
-                    type="text"
-                    value={fields[field.key]}
-                    onChange={(event) => updateField(field.key, event.target.value)}
-                  />
-                )}
-              </label>
-            ))}
-          </div>
-        )}
+        <div className="section">
+          <label className="field-row">
+            <span>LinkedIn profile URL</span>
+            <input
+              type="url"
+              placeholder="https://www.linkedin.com/in/example"
+              value={linkedinUrl}
+              onChange={(event) => setLinkedinUrl(event.target.value)}
+            />
+          </label>
+          <button className="secondary" onClick={handleFetchProfile} disabled={!linkedinUrl.trim() || loading}>
+            {loading && downloadStatus === "Fetching profile PDF..." ? "Fetching…" : "Fetch profile PDF"}
+          </button>
+        </div>
 
-        {step === 3 && (
-          <div className="credential-card">
-            <div className="card-header">
-              <span className="card-brand">myCredentials</span>
-              <span className="card-label">HNP</span>
+        <div className="section status-panel">
+          {downloadStatus && <p className="hint">{downloadStatus}</p>}
+          {downloadPath && <p className="hint">Path: <code>{downloadPath}</code></p>}
+          {azureStatus && <p className="hint">{azureStatus}</p>}
+          {azureUrl && (
+            <p className="hint">
+              SAS URL: <a href={azureUrl} target="_blank" rel="noreferrer">Open blob</a>
+            </p>
+          )}
+          {analysisStatus && <p className="hint">{analysisStatus}</p>}
+          {analysisResult && (
+            <div className="analysis-result">
+              <h2>Analysis Result</h2>
+              <pre>{JSON.stringify(analysisResult, null, 2)}</pre>
             </div>
-            <h2>{credential?.full_name || ""}</h2>
-            <p className="card-title">{credential?.title || ""}</p>
-            <p className="card-summary">{credential?.summary || ""}</p>
-            <p className="card-url">{credential?.url || ""}</p>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
-      <div className="action-row">
-        {step > 0 && step < 3 && (
-          <button className="secondary" onClick={() => setStep(step - 1)} disabled={loading}>
-            Back
+        <div className="section">
+          <button className="primary" onClick={handleUploadAzure} disabled={!uploadId || loading}>
+            {loading && azureStatus === "Uploading to Azure..." ? "Saving…" : "Save to Azure"}
           </button>
-        )}
-
-        {step === 0 && (
-          <button className="primary" onClick={handleUpload} disabled={!file || loading}>
-            {loading ? "Uploading…" : "Upload"}
+          <button
+            className="secondary"
+            onClick={handleAnalyzeBlob}
+            disabled={!azureUrl || loading}
+            style={{ marginLeft: "1rem" }}
+          >
+            {loading && analysisStatus === "Analyzing uploaded document..." ? "Analyzing…" : "Analyze Blob"}
           </button>
-        )}
-
-        {step === 2 && (
-          <button className="primary" onClick={handleGenerate} disabled={loading}>
-            {loading ? "Generating…" : "Generate credential"}
-          </button>
-        )}
+        </div>
       </div>
     </div>
   );

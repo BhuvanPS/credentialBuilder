@@ -1,12 +1,12 @@
-const baseUrl = "http://localhost:8000";
+const baseUrl = "http://localhost:8001";
 
 const request = async (path, options = {}) => {
-  const res = await fetch(`${baseUrl}${path}`, options);
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || "API request failed");
+  const response = await fetch(`${baseUrl}${path}`, options);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || "Request failed");
   }
-  return res.json();
+  return response.json();
 };
 
 export const uploadDocument = async (file) => {
@@ -18,16 +18,23 @@ export const uploadDocument = async (file) => {
   });
 };
 
-export const extractDocument = async (payload) =>
-  request("/extract", {
+export const downloadLinkedInProfile = async (url) =>
+  request("/download", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+
+export const uploadToAzure = async (payload) =>
+  request("/azure/upload", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 
-export const generateCredential = async (payload) =>
-  request("/generate", {
+export const analyzeBlobUrl = async (url) =>
+  request("/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ url }),
   });
