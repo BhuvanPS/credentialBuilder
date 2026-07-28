@@ -11,9 +11,27 @@
 export default function ProcessingPipeline({ phase, fileName, azureUrl }) {
   if (phase === 'idle') return null;
 
+  const getProgressWidth = (phase) => {
+    switch (phase) {
+      case 'uploading': return '25%';
+      case 'saving_azure': return '60%';
+      case 'analyzing': return '85%';
+      case 'completed': return '100%';
+      default: return '0%';
+    }
+  };
+
   return (
     <div className="pipeline-container">
-      <div className="pipeline-title">Document Processing Pipeline</div>
+      <div className="pipeline-header-row" style={{ marginBottom: '8px' }}>
+        <div className="pipeline-title">Document Processing Pipeline</div>
+      </div>
+      
+      {/* Animated linear progress bar */}
+      <div className="pipeline-progress-bar-container" style={{ width: '100%', height: '4px', background: '#e2e8f0', borderRadius: '2px', marginBottom: '20px', overflow: 'hidden' }}>
+        <div className="pipeline-progress-bar" style={{ width: getProgressWidth(phase), height: '100%', background: 'linear-gradient(90deg, var(--color-prussian) 0%, var(--color-digital) 100%)', borderRadius: '2px', transition: 'width 0.4s cubic-bezier(0.4, 0, 0.2, 1)' }}></div>
+      </div>
+
       <div className="pipeline-steps">
         {/* Step 1: Uploading */}
         <div className={`pipeline-step ${phase === 'uploading' ? 'active' : ''} ${['saving_azure', 'analyzing', 'completed'].includes(phase) ? 'completed' : ''}`}>

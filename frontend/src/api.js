@@ -9,9 +9,19 @@ const request = async (path, options = {}) => {
   return response.json();
 };
 
-export const uploadDocument = async (file) => {
+export const uploadDocument = async (files, linkedinFileId = null, linkedinUrl = null) => {
   const formData = new FormData();
-  formData.append("file", file);
+  if (files && files.length > 0) {
+    files.forEach((file) => {
+      formData.append("files", file);
+    });
+  }
+  if (linkedinFileId) {
+    formData.append("linkedin_file_id", linkedinFileId);
+  }
+  if (linkedinUrl) {
+    formData.append("linkedin_url", linkedinUrl);
+  }
   return request("/upload", {
     method: "POST",
     body: formData,

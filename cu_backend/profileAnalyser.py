@@ -178,7 +178,10 @@ def _normalize_analysis_result(raw_result: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def analyze_url(file_url: str) -> Dict[str, Any]:
-    analyzer_id = os.getenv("ANALYZER_ID", "CredentialsBuilderAnalyser_1785029244")
+    analyzer_id = os.getenv("ANALYZER_ID", "").strip()
+    if not analyzer_id:
+        raise ValueError("ANALYZER_ID environment variable is missing or empty. Please set it in the repository root .env file.")
+        
     client = get_analysis_client()
 
     poller = client.begin_analyze(
@@ -186,7 +189,6 @@ def analyze_url(file_url: str) -> Dict[str, Any]:
         inputs=[AnalysisInput(url=file_url)],
     )
     result: AnalysisResult = poller.result()
-    print(f"Analysis completed with status: {result.as_dict()}")
     raw_result = result.as_dict()
     return _normalize_analysis_result(raw_result)
 

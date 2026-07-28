@@ -1,5 +1,6 @@
 import os
 import time
+import json
 from azure.ai.contentunderstanding import ContentUnderstandingClient
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.contentunderstanding.models import (
@@ -29,43 +30,9 @@ client = ContentUnderstandingClient(
 analyzer_id = f"CredentialsBuilderAnalyser_{int(time.time())}"
 
 # --- Skill pool (classify fields) ---
-SKILL_POOL = {
-    "TaxSkills": ["Corporate tax", "International tax & transfer pricing", "Indirect tax (GST)",
-                  "Tax controversy & disputes", "Tax structuring", "R&D tax incentives", "M&A tax",
-                  "Tax compliance & lodgement", "ATO engagement", "Tax legislation research",
-                  "Client communication", "Commercial judgement", "Attention to detail",
-                  "Problem solving", "Stakeholder management"],
-    "PrivateSkills": ["Business advisory", "SMSF & superannuation", "Succession & estate planning",
-                       "Family office services", "Outsourced CFO", "Financial statement preparation",
-                       "Trust accounting", "Cash flow & budgeting", "Private tax compliance",
-                       "Wealth structuring", "Relationship building", "Empathy",
-                       "Discretion & confidentiality", "Active listening", "Trusted advising"],
-    "DealsSkills": ["M&A advisory", "Financial due diligence", "Valuations", "Financial modelling",
-                    "IPO readiness", "Independent expert reports", "Deal structuring",
-                    "Commercial due diligence", "Data analytics", "Integration & separation",
-                    "Negotiation", "Project management", "Working under pressure",
-                    "Insight storytelling", "Collaboration"],
-    "PeopleCultureSkills": ["HR policy", "Talent acquisition", "Onboarding", "Performance management",
-                            "Remuneration & benefits", "Workplace relations", "L&D program design",
-                            "HRIS administration", "Workforce planning", "Diversity & inclusion",
-                            "Coaching", "Conflict resolution", "Empathy", "Communication",
-                            "Change management"],
-    "LegalRiskSkills": ["Contract drafting & review", "Risk management frameworks", "AML/CTF compliance",
-                        "Conflicts & independence", "Privacy & data protection", "Regulatory knowledge",
-                        "Incident & breach management", "Dispute resolution", "Corporate governance",
-                        "Legal research", "Sound judgement", "Ethical reasoning", "Influencing",
-                        "Attention to detail", "Clear written communication"],
-    "FinanceSkills": ["Management reporting", "Budgeting & forecasting", "Billing & WIP",
-                      "Accounts payable / receivable", "Procurement", "Financial controls",
-                      "Excel modelling", "Power BI & analytics", "Month-end close",
-                      "Cost management", "Commercial acumen", "Accuracy", "Prioritisation",
-                      "Stakeholder communication", "Problem solving"],
-    "TechnologySkills": ["SharePoint & M365 administration", "Cyber security", "Power Automate",
-                        "Power BI", "Copilot Studio & AI", "Networking & infrastructure",
-                        "Identity & access (Entra ID)", "Service desk / ITIL", "Data management",
-                        "PowerShell scripting", "Troubleshooting", "User empathy", "Communication",
-                        "Collaboration", "Continuous learning"],
-}
+skill_pool_path = Path(__file__).resolve().parent / "skill_pool.json"
+with open(skill_pool_path, "r", encoding="utf-8") as f:
+    SKILL_POOL = json.load(f)
 
 skill_field_definitions = {
     field_name: ContentFieldDefinition(

@@ -18,12 +18,16 @@ import httpx
 from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Any, Dict, List
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
+import io
+import docx
+from fpdf import FPDF
+from pypdf import PdfWriter
 
 from cu_backend.profileAnalyser import analyze_url
 
@@ -149,21 +153,165 @@ def clean_json_text(text: str) -> str:
 
 # --- API ROUTES ---
 
-@app.post("/upload")
-async def upload_resume(file: UploadFile = File(...)) -> Dict[str, Any]:
-    """Caches an uploaded resume file temporarily in-memory."""
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file uploaded")
+def convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
+    """Converts DOCX file bytes into PDF bytes using python-docx and fpdf2."""
+    doc = docx.Document(io.BytesIO(docx_bytes))
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=10)
+    
+    # Write paragraphs
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if text:
+            # Clean text to latin-1 to avoid encoding crashes
+            safe_text = text.encode("latin-1", "replace").decode("latin-1")
+            pdf.multi_cell(0, 5, safe_text)
+            pdf.ln(3)
+            
+    # Write tables
+    for table in doc.tables:
+        pdf.ln(5)
+        for row in table.rows:
+            row_text = " | ".join([cell.text.strip() for cell in row.cells if cell.text.strip()])
+            if row_text:
+                safe_text = row_text.encode("latin-1", "replace").decode("latin-1")
+                pdf.multi_cell(0, 5, safe_text)
+                pdf.ln(3)
+                
+    return bytes(pdf.output())
 
-    contents = await file.read()
-    if len(contents) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File exceeds 10MB limit")
+
+def merge_pdfs(pdf_list: List[bytes]) -> bytes:
+    """Merges multiple PDF bytearrays/bytes into a single PDF bytearray using pypdf PdfWriter."""
+    writer = PdfWriter()
+    for pdf_bytes in pdf_list:
+        writer.append(io.BytesIO(pdf_bytes))
+    
+    out = io.BytesIO()
+    writer.write(out)
+    writer.close()
+    return out.getvalue()
+
+
+def generate_meaningful_filename(original_names: List[str], linkedin_url: str = None) -> str:
+    """Generates a meaningful name for merged documents based on uploaded files and LinkedIn url."""
+    name_slug = ""
+    
+    if linkedin_url:
+        url_parts = [p for p in linkedin_url.split('/') if p.strip()]
+        for i, part in enumerate(url_parts):
+            if part == 'in' and i + 1 < len(url_parts):
+                name_slug = url_parts[i+1].split('?')[0].strip()
+                break
+                
+    if not name_slug and original_names:
+        keywords = ['resume', 'cv', 'profile', 'bio', 'background', 'credentials']
+        primary_name = None
+        for filename in original_names:
+            lower_name = filename.lower()
+            if any(kw in lower_name for kw in keywords):
+                primary_name = filename
+                break
+        if not primary_name:
+            primary_name = original_names[0]
+        if '.' in primary_name:
+            name_slug = '.'.join(primary_name.split('.')[:-1])
+        else:
+            name_slug = primary_name
+
+    if not name_slug:
+        name_slug = "candidate_profile"
+        
+    clean_slug = "".join(c for c in name_slug if c.isalnum() or c in ('-', '_', ' ')).strip()
+    clean_slug = clean_slug.replace(' ', '_')
+    
+    return f"{clean_slug}_merged.pdf"
+
+
+@app.post("/upload")
+async def upload_documents(
+    files: List[UploadFile] = File(None),
+    linkedin_file_id: str = Form(None),
+    linkedin_url: str = Form(None)
+) -> Dict[str, Any]:
+    """
+    Accepts multiple documents (PDF, DOCX) and/or a previously fetched LinkedIn PDF ID.
+    Converts DOCX to PDF, merges all files using pypdf, and caches the result.
+    """
+    processed_pdfs = []
+    original_names = []
+
+    # 1. Retrieve LinkedIn PDF if file ID is provided
+    if linkedin_file_id:
+        if linkedin_file_id in uploaded_files:
+            processed_pdfs.append(uploaded_files[linkedin_file_id])
+            original_names.append("linkedin_profile.pdf")
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail="LinkedIn file ID not found in cache"
+            )
+
+    # 2. Process uploaded files
+    if files:
+        for file in files:
+            if not file.filename:
+                continue
+                
+            contents = await file.read()
+            if len(contents) > 10 * 1024 * 1024:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"File {file.filename} exceeds the 10MB limit."
+                )
+                
+            ext = file.filename.split('.')[-1].lower()
+            if ext == 'docx':
+                try:
+                    pdf_bytes = convert_docx_to_pdf(contents)
+                    processed_pdfs.append(pdf_bytes)
+                    original_names.append(file.filename)
+                except Exception as e:
+                    raise HTTPException(
+                        status_code=500, 
+                        detail=f"Failed to convert {file.filename} to PDF: {str(e)}"
+                    )
+            elif ext == 'pdf':
+                processed_pdfs.append(contents)
+                original_names.append(file.filename)
+            else:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Unsupported format for file {file.filename}. Only PDF and DOCX are allowed."
+                )
+
+    if not processed_pdfs:
+        raise HTTPException(status_code=400, detail="No valid documents or profile data provided")
+
+    # 3. Merge or return single file
+    if len(processed_pdfs) == 1:
+        final_pdf = processed_pdfs[0]
+        base_name = original_names[0]
+        if base_name.endswith('.docx'):
+            filename = base_name[:-5] + '.pdf'
+        else:
+            filename = base_name
+    else:
+        try:
+            final_pdf = merge_pdfs(processed_pdfs)
+            filename = generate_meaningful_filename(original_names, linkedin_url)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Failed to merge PDF files: {str(e)}"
+            )
 
     file_id = uuid.uuid4().hex
-    uploaded_files[file_id] = contents
-    uploaded_file_names[file_id] = file.filename
+    uploaded_files[file_id] = final_pdf
+    uploaded_file_names[file_id] = filename
 
-    return {"file_id": file_id, "filename": file.filename}
+    return {"file_id": file_id, "filename": filename}
 
 
 @app.post("/download")

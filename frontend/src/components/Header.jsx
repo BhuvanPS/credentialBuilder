@@ -1,19 +1,27 @@
 /**
  * Header component rendered at the top of the application shell.
- * Provides a clean, modern logo branding and header layout.
+ * Displays the Horizon Nexus Partners (HNP) branding, logo, and slogan
+ * according to the 2026 visual identity guidelines.
  */
+import logo from '../logo.png';
+
 export default function Header() {
   return (
     <header className="app-header">
       <div className="app-logo-container">
-        <div className="app-logo-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: '24px', height: '24px' }}>
-            <path d="M12 2L2 7L12 12L22 7L12 2Z"/>
-            <path d="M2 17L12 22L22 17"/>
-            <path d="M2 12L12 17L22 12"/>
-          </svg>
+        <div className="hnp-logo" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <img src={logo} alt="HNP Logo" style={{ height: '30px', width: 'auto', objectFit: 'contain' }} />
+          <div className="hnp-logo-text-group">
+            <span className="hnp-logo-text-line">Horizon</span>
+            <span className="hnp-logo-text-line">Nexus</span>
+            <span className="hnp-logo-text-line">Partners</span>
+          </div>
         </div>
-        <span className="app-logo-text">CredentialBuilder</span>
+      </div>
+      <div className="hnp-slogan-container">
+        <span className="hnp-slogan-text">Modern. Different.</span>
+        <span className="hnp-slogan-divider">|</span>
+        <span className="hnp-app-title">Credential Builder</span>
       </div>
     </header>
   );

@@ -1,5 +1,25 @@
 import { FORM_RENDER_FIELDS } from '../constants/schema';
 
+/**
+ * Helper to determine CSS classes for confidence highlights.
+ * High (>= 80%): Green success
+ * Medium (>= 50%): Orange warning
+ * Low (< 50%): Red danger
+ *
+ * @param {number|null} confidence
+ * @returns {string}
+ */
+const getConfidenceClass = (confidence) => {
+  if (confidence == null) return '';
+  if (confidence >= 0.8) return 'conf-high';
+  if (confidence >= 0.5) return 'conf-medium';
+  return 'conf-low';
+};
+
+/**
+ * CredentialForm renders the prefilled data review inputs, displaying inline
+ * metadata match confidence percentages based on Content Understanding schema.
+ */
 export default function CredentialForm({
   formData,
   onTextFieldChange,
@@ -16,7 +36,7 @@ export default function CredentialForm({
             <label className="field-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span>{label}</span>
               {formData[key]?.confidence != null && (
-                <span className="field-confidence-badge" title="Extraction confidence">
+                <span className={`field-confidence-badge ${getConfidenceClass(formData[key].confidence)}`} title="Extraction confidence">
                   {Math.round(formData[key].confidence * 100)}% Match
                 </span>
               )}
@@ -38,7 +58,7 @@ export default function CredentialForm({
         {FORM_RENDER_FIELDS.slice(4).map(({ key, label, type, placeholder, addButtonLabel }) => {
           const list = Array.isArray(formData[key]) ? formData[key] : [];
           return (
-            <div className="list-field-group" key={key}>
+            <div className={`list-field-group ${type === 'textareaList' ? 'full-width' : ''}`} key={key}>
               <label className="list-label">{label}</label>
               {placeholder && <p className="list-sublabel">{placeholder}</p>}
               
@@ -59,7 +79,7 @@ export default function CredentialForm({
                       />
                     )}
                     {item?.confidence != null && (
-                      <span className="item-confidence-badge" title="Extraction confidence">
+                      <span className={`item-confidence-badge ${getConfidenceClass(item.confidence)}`} title="Extraction confidence">
                         {Math.round(item.confidence * 100)}%
                       </span>
                     )}

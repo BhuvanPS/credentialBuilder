@@ -13,6 +13,7 @@ A helper module containing the Azure Content Understanding provisioning and extr
 ```
 cu_backend/
 ├── buildAnalyser.py    # Registers and deploys the custom analyzer model schema to Azure Content Understanding
+├── skill_pool.json     # Configuration file containing all classification skill matrices (Tax, Deals, Tech, etc.)
 ├── profileAnalyser.py  # Performs analysis execution by querying SAS URLs and parsing result dictionaries
 └── sample_result.json  # Mock analysis response body structure for offline testing reference
 ```

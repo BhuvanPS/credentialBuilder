@@ -19,7 +19,7 @@ import { cleanFormData, normalizeAnalysisFormData, getCredentialSummary } from '
  */
 export default function App() {
   // --- STATE DECLARATIONS ---
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const [fileName, setFileName] = useState('');
   const [uploadId, setUploadId] = useState('');
   const [linkedinUrl, setLinkedinUrl] = useState('');
@@ -27,17 +27,21 @@ export default function App() {
   const [formData, setFormData] = useState(initialFormData);
   const [summaryReady, setSummaryReady] = useState(false);
   const [activeStep, setActiveStep] = useState(1);
+  const [unlockedStep, setUnlockedStep] = useState(1);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [profilePictureUrl, setProfilePictureUrl] = useState(null);
+  const [ingestionSource, setIngestionSource] = useState(null); // 'resume' | 'linkedin' | null
   
   // Explicitly track the ingestion/analysis pipeline phase
   // Values: 'idle' | 'uploading' | 'saving_azure' | 'analyzing' | 'completed'
   const [processingPhase, setProcessingPhase] = useState('idle');
+  const [isDragging, setIsDragging] = useState(false);
 
   // --- NAVIGATION HANDLERS ---
   const handleStepClick = (step) => {
     // Only allow navigating back to previously unlocked steps
-    if (step <= activeStep) {
+    if (step <= unlockedStep) {
       setActiveStep(step);
     }
   };
@@ -127,18 +131,88 @@ export default function App() {
     }));
   };
 
-  /**
-   * Standard file input selection event. Clears processing states.
-   */
   const handleFileChange = (event) => {
-    const selected = event.target.files?.[0] ?? null;
-    setFile(selected);
-    setFileName(selected?.name || '');
-    setUploadId('');
-    setAzureUrl('');
-    setFormData(initialFormData);
-    setActiveStep(1);
-    setProcessingPhase('idle');
+    const selected = Array.from(event.target.files || []);
+    if (selected.length > 0) {
+      setFiles((prev) => {
+        const existingNames = new Set(prev.map((f) => f.name));
+        const uniqueNew = selected.filter((f) => !existingNames.has(f.name));
+        const updated = [...prev, ...uniqueNew];
+        setFileName(updated.length === 1 ? updated[0].name : `${updated.length} files attached`);
+        return updated;
+      });
+      setUploadId('');
+      setAzureUrl('');
+      setFormData(initialFormData);
+      setActiveStep(1);
+      setUnlockedStep(1);
+      setProcessingPhase('idle');
+    }
+  };
+
+  /**
+   * Handles professional picture file selection and converts it to a data URL.
+   */
+  const handlePictureChange = (event) => {
+    const selectedFile = event.target.files?.[0] ?? null;
+    if (selectedFile) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfilePictureUrl(reader.result);
+      };
+      reader.readAsDataURL(selectedFile);
+    }
+  };
+
+  /**
+   * Drag-and-drop event handlers for resume dropzone.
+   */
+  const handleDragOver = (event) => {
+    event.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    setIsDragging(false);
+    const selectedFiles = Array.from(event.dataTransfer.files || []);
+    if (selectedFiles.length > 0) {
+      const validFiles = [];
+      const invalidFiles = [];
+      
+      selectedFiles.forEach((f) => {
+        const ext = f.name.split('.').pop().toLowerCase();
+        if (ext === 'pdf' || ext === 'docx') {
+          validFiles.push(f);
+        } else {
+          invalidFiles.push(f.name);
+        }
+      });
+      
+      if (invalidFiles.length > 0) {
+        setError(`Unsupported file types: ${invalidFiles.join(', ')}. Only PDF and DOCX are allowed.`);
+      }
+      
+      if (validFiles.length > 0) {
+        setFiles((prev) => {
+          const existingNames = new Set(prev.map((f) => f.name));
+          const uniqueNew = validFiles.filter((f) => !existingNames.has(f.name));
+          const updated = [...prev, ...uniqueNew];
+          setFileName(updated.length === 1 ? updated[0].name : `${updated.length} files attached`);
+          return updated;
+        });
+        setUploadId('');
+        setAzureUrl('');
+        setFormData(initialFormData);
+        setActiveStep(1);
+        setUnlockedStep(1);
+        setProcessingPhase('idle');
+      }
+    }
   };
 
   // --- BACKGROUND PIPELINE HANDLERS ---
@@ -170,68 +244,66 @@ export default function App() {
       }
       setProcessingPhase('completed');
       setActiveStep(2); // Automatically swap tab to prefilled form editor
+      setUnlockedStep((prev) => Math.max(prev, 2));
     } catch (err) {
       setError(err.message || 'Processing failed.');
       setProcessingPhase('idle');
     } finally {
       setLoading(false);
+      setIngestionSource(null);
     }
   };
 
   /**
-   * Uploads file to backend server local cache and initiates background processing.
+   * Unified document and profile ingestion pipeline:
+   * 1. If LinkedIn URL is present, fetches and caches it as a PDF.
+   * 2. Uploads local files and/or merges them with the fetched LinkedIn PDF.
+   * 3. Saves final merged PDF to Azure Blob Storage and initiates Content Understanding analysis.
    */
-  const handleUploadResume = async () => {
-    if (!file) {
-      setError('Select a resume file first.');
+  const handleIngestAndProcess = async () => {
+    if (files.length === 0 && !linkedinUrl.trim()) {
+      setError('Please attach at least one document or enter a LinkedIn URL.');
       return;
     }
+
     setError('');
     setLoading(true);
-    setProcessingPhase('uploading');
     setAzureUrl('');
     setSummaryReady(false);
 
-    try {
-      const result = await uploadDocument(file);
-      setUploadId(result.file_id || '');
-      setFileName(result.filename || file.name);
-      
-      // Chain background Azure upload & analysis
-      await processDocument(result.file_id, result.filename || file.name);
-    } catch (err) {
-      setError(err.message || 'Upload failed.');
-      setProcessingPhase('idle');
-      setLoading(false);
-    }
-  };
+    let linkedinFileId = null;
 
-  /**
-   * Downloads LinkedIn PDF file via scraper and initiates background processing.
-   */
-  const handleFetchProfile = async () => {
-    if (!linkedinUrl.trim()) {
-      setError('Enter a LinkedIn profile URL first.');
-      return;
+    // Phase 1: Scrape LinkedIn profile if specified
+    if (linkedinUrl.trim()) {
+      setIngestionSource('linkedin');
+      setProcessingPhase('uploading');
+      try {
+        const result = await downloadLinkedInProfile(linkedinUrl.trim());
+        linkedinFileId = result.file_id;
+      } catch (err) {
+        setError(`LinkedIn Scraper Failed: ${err.message || err}`);
+        setProcessingPhase('idle');
+        setLoading(false);
+        setIngestionSource(null);
+        return;
+      }
     }
-    setError('');
-    setLoading(true);
+
+    // Phase 2: Upload local documents and merge with LinkedIn (if present)
+    setIngestionSource(files.length > 0 ? 'resume' : 'linkedin');
     setProcessingPhase('uploading');
-    setAzureUrl('');
-    setSummaryReady(false);
-
     try {
-      const result = await downloadLinkedInProfile(linkedinUrl.trim());
-      const filename = result.file_path ? result.file_path.split(/[/\\]/).pop() : 'LinkedIn profile';
-      setFileName(filename);
-      setUploadId(result.file_id || '');
+      const uploadResult = await uploadDocument(files, linkedinFileId, linkedinUrl.trim() || null);
+      setUploadId(uploadResult.file_id || '');
+      setFileName(uploadResult.filename || 'merged_credentials.pdf');
       
-      // Chain background Azure upload & analysis
-      await processDocument(result.file_id, filename);
+      // Phase 3: Save to Azure Blob Storage and Analyze
+      await processDocument(uploadResult.file_id, uploadResult.filename || 'merged_credentials.pdf');
     } catch (err) {
-      setError(err.message || 'Profile download failed.');
+      setError(`Processing failed: ${err.message || err}`);
       setProcessingPhase('idle');
       setLoading(false);
+      setIngestionSource(null);
     }
   };
 
@@ -248,6 +320,7 @@ export default function App() {
     setLoading(true);
     setSummaryReady(false);
     setActiveStep(3); // Switch view immediately to Step 3 to play loader/shimmer
+    setUnlockedStep((prev) => Math.max(prev, 3));
 
     try {
       // Gather payload details from reviewed form fields
@@ -292,7 +365,7 @@ export default function App() {
 
         {error && <div className="error-banner">{error}</div>}
 
-        <StepTabs activeStep={activeStep} onStepClick={handleStepClick} />
+        <StepTabs activeStep={activeStep} unlockedStep={unlockedStep} onStepClick={handleStepClick} />
 
         {/* Ingestion & Analysis Timeline tracker */}
         {processingPhase !== 'idle' && (
@@ -306,30 +379,181 @@ export default function App() {
         <div className="section step-section">
           {/* STEP 1: UPLOAD / LINKEDIN FETCH */}
           {activeStep === 1 && (
-            <div className="step-card">
-              <h2>Step 1: Upload or Fetch</h2>
-              <div className="step-content">
-                <label className="input-file">
-                  <span>Upload resume</span>
-                  <input type="file" accept=".pdf,.docx" onChange={handleFileChange} />
-                </label>
-                <button className="primary" onClick={handleUploadResume} disabled={!file || loading}>
-                  {loading && processingPhase === 'uploading' ? 'Uploading...' : 'Upload Resume'}
-                </button>
-                <div className="divider">or</div>
-                <label className="field-row">
-                  <span>LinkedIn profile URL</span>
-                  <input
-                    type="url"
-                    placeholder="https://www.linkedin.com/in/example"
-                    value={linkedinUrl}
-                    onChange={(event) => setLinkedinUrl(event.target.value)}
-                  />
-                </label>
-                <button className="secondary" onClick={handleFetchProfile} disabled={!linkedinUrl.trim() || loading}>
-                  {loading && processingPhase === 'uploading' ? 'Fetching...' : 'Fetch profile PDF'}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '32px', width: '100%' }}>
+              
+              {/* STANDALONE PHOTO UPLOAD CARD */}
+              <div className="step-card photo-upload-card">
+                <div className="photo-upload-card-text">
+                  <h3>Professional Profile Photo</h3>
+                  <p>Attach a professional portrait to display next to the candidate credentials on the summary card.</p>
+                </div>
+                
+                <div className="photo-upload-selector-container">
+                  {!profilePictureUrl ? (
+                    <div 
+                      className="photo-upload-selector"
+                      onClick={() => document.getElementById('photo-file-input').click()}
+                    >
+                      <input 
+                        type="file" 
+                        id="photo-file-input" 
+                        accept="image/*" 
+                        style={{ display: 'none' }} 
+                        onChange={handlePictureChange} 
+                      />
+                      <div className="photo-selector-left">
+                        <svg className="photo-selector-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                          <circle cx="12" cy="13" r="4" />
+                        </svg>
+                        <span>Upload Photo (Optional)</span>
+                      </div>
+                      <span className="btn-upload-photo">Browse</span>
+                    </div>
+                  ) : (
+                    /* Photo Attachment preview row */
+                    <div className="attachment-bar" style={{ background: '#e0f2fe', borderColor: 'rgba(14, 165, 233, 0.2)', color: '#0369a1' }}>
+                      <div className="attachment-info">
+                        <img 
+                          src={profilePictureUrl} 
+                          alt="Attached avatar" 
+                          style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover', border: '1px solid var(--color-border)', flexShrink: 0 }} 
+                        />
+                        <span>Photo attached successfully</span>
+                      </div>
+                      <button 
+                        type="button" 
+                        className="btn-remove-attachment" 
+                        onClick={() => setProfilePictureUrl(null)}
+                        title="Remove photo"
+                      >
+                        &times;
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="ingestion-grid">
+                
+                {/* CARD 1: LOCAL FILE INGESTION */}
+                <div className="ingestion-card">
+                  <div className="ingestion-card-header">
+                    <h3>Upload Local Resume</h3>
+                    <p>Choose a PDF or Word document from your computer or drag it directly into the zone below.</p>
+                  </div>
+                  
+                  <div className="ingestion-card-body">
+                    {/* File Selector Dropzone */}
+                    <div 
+                      className={`dropzone ${isDragging ? 'dragging' : ''}`}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      onClick={() => document.getElementById('resume-file-input').click()}
+                    >
+                      <input 
+                        type="file" 
+                        id="resume-file-input" 
+                        accept=".pdf,.docx" 
+                        multiple
+                        style={{ display: 'none' }} 
+                        onChange={handleFileChange} 
+                      />
+                      <div className="dropzone-icon-wrapper">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="17 8 12 3 7 8" />
+                          <line x1="12" y1="3" x2="12" y2="15" />
+                        </svg>
+                      </div>
+                      <p className="dropzone-title">Drag & Drop files here</p>
+                      <p className="dropzone-subtitle">or click to browse from finder (PDF or DOCX up to 10MB)</p>
+                    </div>
+
+                    {/* Attached Files List */}
+                    {files.length > 0 && (
+                      <div className="attachment-list" style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%', marginTop: '16px' }}>
+                        <p style={{ margin: '0 0 4px 0', fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-dark-muted)', textTransform: 'uppercase' }}>Attached Files ({files.length})</p>
+                        {files.map((f, idx) => (
+                          <div className="attachment-bar" key={idx}>
+                            <div className="attachment-info">
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                              </svg>
+                              <span className="attachment-name" title={f.name}>{f.name}</span>
+                            </div>
+                            <button 
+                              type="button" 
+                              className="btn-remove-attachment" 
+                              onClick={() => {
+                                const updated = files.filter((_, i) => i !== idx);
+                                setFiles(updated);
+                                setFileName(updated.length === 0 ? '' : (updated.length === 1 ? updated[0].name : `${updated.length} files attached`));
+                              }}
+                              title="Remove file"
+                            >
+                              &times;
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* CARD 2: LINKEDIN PROFILE SCRAPER */}
+                <div className="ingestion-card">
+                  <div className="ingestion-card-header">
+                    <h3>Import from LinkedIn</h3>
+                    <p>Import background timeline, achievements, and education directly from a public LinkedIn profile page.</p>
+                  </div>
+
+                  <div className="ingestion-card-body" style={{ justifyContent: 'center' }}>
+                    <label className="field-row">
+                      <span>Public LinkedIn URL</span>
+                      <div className="linkedin-input-wrapper">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.779-1.75-1.75s.784-1.75 1.75-1.75 1.75.779 1.75 1.75-.784 1.75-1.75 1.75zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z" />
+                        </svg>
+                        <input
+                          type="url"
+                          placeholder="https://www.linkedin.com/in/username"
+                          value={linkedinUrl}
+                          onChange={(event) => setLinkedinUrl(event.target.value)}
+                        />
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* UNIFIED ACTION BUTTON */}
+              <div style={{ display: 'flex', justifyContent: 'center', marginTop: '16px' }}>
+                <button 
+                  className="primary" 
+                  style={{ minWidth: '340px', padding: '14px 32px', fontSize: '1rem' }}
+                  onClick={handleIngestAndProcess} 
+                  disabled={loading || (files.length === 0 && !linkedinUrl.trim())}
+                >
+                  {loading ? (
+                    <span>
+                      {processingPhase === 'uploading' 
+                        ? (ingestionSource === 'linkedin' ? 'Scraping LinkedIn...' : 'Uploading Files...') 
+                        : 'Analyzing Documents...'}
+                    </span>
+                  ) : (
+                    <span>
+                      {files.length > 0 && linkedinUrl.trim() 
+                        ? 'Merge & Process Resume + LinkedIn' 
+                        : (files.length > 0 ? 'Process Ingested Resume' : 'Import from LinkedIn')}
+                    </span>
+                  )}
                 </button>
               </div>
+
             </div>
           )}
 
@@ -382,7 +606,7 @@ export default function App() {
                 {loading ? (
                   <AISynthesisLoader />
                 ) : summaryReady ? (
-                  <CredentialCard summary={summary} />
+                  <CredentialCard summary={summary} pictureUrl={profilePictureUrl} />
                 ) : (
                   <div className="summary-placeholder">
                     <p className="hint">Summary has not been generated yet. Click the button on Step 2 after analysis completes.</p>

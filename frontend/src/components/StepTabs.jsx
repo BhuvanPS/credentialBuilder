@@ -8,16 +8,16 @@ import { STEP_TITLES } from '../constants/schema';
  * @param {number} props.activeStep - Currently active timeline stage (1, 2, or 3)
  * @param {function} props.onStepClick - Callback when a unlocked timeline tab is clicked
  */
-export default function StepTabs({ activeStep, onStepClick }) {
+export default function StepTabs({ activeStep, unlockedStep = activeStep, onStepClick }) {
   return (
     <div className="step-tabs">
       {STEP_TITLES.map((step) => (
         <button
           key={step.id}
           type="button"
-          className={`step-tab ${activeStep === step.id ? 'active' : ''} ${activeStep > step.id ? 'complete' : ''}`}
+          className={`step-tab ${activeStep === step.id ? 'active' : ''} ${unlockedStep > step.id ? 'complete' : ''}`}
           onClick={() => onStepClick(step.id)}
-          disabled={step.id > activeStep}
+          disabled={step.id > unlockedStep}
         >
           <span className="step-number">{step.id}</span>
           <span className="step-label">{step.label}</span>

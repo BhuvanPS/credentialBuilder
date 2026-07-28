@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import logo from '../logo.png';
 
 export function AISynthesisLoader() {
   const [statusIdx, setStatusIdx] = useState(0);
@@ -34,15 +35,25 @@ export function AISynthesisLoader() {
   );
 }
 
-export default function CredentialCard({ summary }) {
+export default function CredentialCard({ summary, pictureUrl }) {
   if (!summary) {
     return <p className="hint">No analyzed credential data available yet.</p>;
   }
 
   return (
     <div className="credential-card">
-      <h3>{summary.name}</h3>
-      <p className="card-title">{summary.title}</p>
+      <div className="card-header-profile" style={{ display: 'flex', alignItems: 'center', gap: '24px', marginBottom: '24px' }}>
+        <img 
+          src={pictureUrl || logo} 
+          alt="Professional Profile" 
+          className="card-avatar" 
+          style={{ width: '80px', height: '80px', borderRadius: '12px', objectFit: 'cover', border: '2px solid var(--color-border)', flexShrink: 0 }} 
+        />
+        <div className="card-header-info">
+          <h3 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 800, color: 'var(--color-dark)' }}>{summary.name}</h3>
+          <p className="card-title" style={{ margin: '4px 0 0 0', fontSize: '1.05rem', fontWeight: 600, color: 'var(--color-primary)' }}>{summary.title}</p>
+        </div>
+      </div>
       <div className="card-section">
         <p className="card-label">Profile Summary</p>
         <p>{summary.summary || '--'}</p>
