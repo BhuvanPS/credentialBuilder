@@ -18,6 +18,20 @@ sequenceDiagram
     participant AZ_Blob as Azure Blob Storage
     participant AZ_CU as Azure Content Understanding
     participant AZ_AI as Azure AI Agent Service
+    participant DB as Fabric SQL Database
+
+    %% Landing Screen
+    User->>FE: Open App (Welcome Screen)
+    alt Build Credentials
+        User->>FE: Select "Build Credentials"
+    else View Repository
+        User->>FE: Select "View & Manage Credentials"
+        FE->>BE: GET /api/candidates
+        BE->>DB: SELECT * FROM candidates
+        DB-->>BE: Candidate rows
+        BE-->>FE: Candidate list JSON
+        FE->>User: Display repository table
+    end
 
     %% Ingestion
     User->>FE: Ingest: Upload PDF/Docx OR Enter LinkedIn URL
@@ -58,6 +72,13 @@ sequenceDiagram
     BE-->>FE: Returns synthesized Name, Title, and Profile Summary
     FE->>FE: Remove loader animation & fade in final Credential Card
     FE->>User: Display final Summary Card (Name, Title, Summary)
+
+    %% Persistence
+    User->>FE: Click "Save Candidate Profile"
+    FE->>BE: POST /api/candidates (form_data + summary_data)
+    BE->>DB: UPSERT into candidates table (name as PK)
+    DB-->>BE: Confirmation
+    BE-->>FE: Success response
 ```
 
 ### 1. Ingestion Phase (Step 1)
@@ -89,9 +110,31 @@ sequenceDiagram
 - Prompts the agent to synthesize details into a high-impact executive summary and requests a structured JSON format.
 - If credentials or endpoints are unavailable, a rule-based fallback synthesizes the paragraph automatically.
 
-### 7. Preview & Card Export (Step 3)
-- Once the API resolves, the loader stops and the card fades in.
-- Renders the simplified profile summary card containing only the candidate's **Name**, **Title**, and synthesized **Profile Summary**.
+### 7. Save & Repository (Step 3 → Fabric SQL)
+- Once the summary card is rendered, the recruiter clicks **Save Candidate Profile**.
+- The backend upserts the candidate record (name, title, profile picture, full form data, and summary data) into the `candidates` table in Microsoft Fabric SQL Database — with `name` as the **primary key**.
+- From the **View & Manage Credentials** landing screen, recruiters can list all saved profiles, view full summary cards in a modal, reload a profile back into the editing form, or permanently delete records.
+
+---
+
+## Prerequisites
+
+Before setting up the project, ensure the following are installed and configured on your Mac:
+
+- **Python 3.11+** (Anaconda or system Python)
+- **Node.js 18+** and `npm`
+- **Google Chrome** (for LinkedIn Selenium scraper)
+- **Azure CLI** (`az`) — required for Entra ID token-based database authentication
+  ```bash
+  brew install azure-cli
+  az login  # Complete MFA in browser; token is cached for the server
+  ```
+- **Microsoft ODBC Driver 18 for SQL Server** — required for Fabric SQL connectivity
+  ```bash
+  brew tap microsoft/mssql-release https://github.com/microsoft/homebrew-mssql-release
+  brew trust microsoft/mssql-release
+  HOMEBREW_ACCEPT_EULA=Y brew install msodbcsql18 mssql-tools18
+  ```
 
 ---
 
@@ -100,13 +143,26 @@ sequenceDiagram
 ### 1. Configuration (.env)
 Create a `.env` file in the root workspace folder with the following variables:
 ```ini
+# Azure Blob Storage
 AZURE_STORAGE_CONNECTION_STRING=your_azure_storage_connection_string
 AZURE_STORAGE_CONTAINER_NAME=uploaded-files
+
+# Azure Content Understanding
 AZURE_CONTENT_UNDERSTANDING_ENDPOINT=your_content_understanding_endpoint
 CONTENT_UNDERSTANDING_KEY=your_content_understanding_api_key
 ANALYZER_ID=your_analyzer_model_id
+
+# LinkedIn Extractor service URL
 LINKEDIN_EXTRACTOR_URL=http://localhost:8000
+
+# Microsoft Fabric SQL Database (leave empty to use local SQLite fallback)
+SQL_CONNECTION_STRING="Driver={ODBC Driver 18 for SQL Server};Server=your-fabric-endpoint.database.fabric.microsoft.com,1433;Database={your-database-name};Encrypt=yes;TrustServerCertificate=no"
+
+# Required on macOS when using Homebrew-installed ODBC driver
+ODBCSYSINI="/opt/homebrew/etc"
 ```
+
+> **Note on authentication**: When `SQL_CONNECTION_STRING` is set, the backend uses `DefaultAzureCredential` (powered by your `az login` token) to authenticate silently. Run `az login` once in your terminal before starting the server. If `SQL_CONNECTION_STRING` is omitted, the app automatically falls back to a local SQLite database (`backend/candidates.db`).
 
 ### 2. Run All Services
 A helper script is provided to automatically boot all services (LinkedIn Scraper, Backend, and Frontend Dev Server):

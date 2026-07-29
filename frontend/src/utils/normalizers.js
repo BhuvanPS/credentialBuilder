@@ -389,9 +389,31 @@ export const getCredentialSummary = (data = {}) => {
     return null;
   }
 
+  const listValues = (arr) =>
+    Array.isArray(arr) ? arr.map((i) => i?.value).filter(Boolean) : [];
+
   return {
-    name: data.fullName.value,
+    name: data.fullName?.value || '',
     title: data.title?.value || '',
+    roleServiceLine: data.roleServiceLine?.value || '',
+    location: data.location?.value || '',
+    experience: data.experience?.value || '',
     summary: data.summary?.value || '',
+    keyExpertise: listValues(data.keyExpertise),
+    coreCompetencies: listValues(data.coreCompetencies),
+    certifications: listValues(data.certifications),
+    affiliationsMemberships: listValues(data.affiliationsMemberships),
+    education: listValues(data.education),
+    achievementsAndLeadership: listValues(data.achievementsAndLeadership),
+    clientOutcomes: listValues(data.clientOutcomes),
+    skillPools: {
+      'Tax': listValues(data.taxSkills).length,
+      'Private': listValues(data.privateSkills).length,
+      'Deals': listValues(data.dealsSkills).length,
+      'People & Culture': listValues(data.peopleCultureSkills).length,
+      'Legal / Risk': listValues(data.legalRiskSkills).length,
+      'Finance': listValues(data.financeSkills).length,
+      'Technology': listValues(data.technologySkills).length,
+    }
   };
 };

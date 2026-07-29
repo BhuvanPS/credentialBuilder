@@ -35,3 +35,25 @@ The Azure Content Understanding custom analyzer model schema (`CredentialsBuilde
 ### Mitigation & Solution
 - **Schema Lock**: The frontend normalizers and backend endpoints are tightly coupled to the registered field keys (like `FullName`, `Title`, `KeyExpertise`).
 - **Redeployment Rule**: Any updates to the fields or skill lists require modifying `buildAnalyser.py`, incrementing the version/timestamp suffix to build a new model ID, and updating the `ANALYZER_ID` variable in the environment configuration (.env).
+
+---
+
+## 4. Microsoft Fabric SQL Database Connection via pyodbc
+
+### Challenge
+Connecting the FastAPI backend to a **Microsoft Fabric SQL Database** over TDS using `pyodbc` involved a problems:
+
+1. **`pymssql` Incompatibility**: The originally planned `pymssql` package does not support the `Authentication=ActiveDirectoryInteractive` auth scheme used by Fabric SQL. The switch to `pyodbc` was necessary to support ODBC-based connection strings.
+
+
+
+### Mitigation & Solution
+
+- **Driver**: Installed `msodbcsql18` via Homebrew using `brew tap microsoft/mssql-release && HOMEBREW_ACCEPT_EULA=Y brew install msodbcsql18`. Required emptying the Trash to remove Xcode from Homebrew's path scan.
+
+- **MFA Authentication**: Instead of using interactive or service principal auth modes, the backend was refactored to use the **Azure Access Token injection approach**:
+  - The developer runs `az login` in a foreground terminal once (completing MFA in the browser).
+  - The backend calls `DefaultAzureCredential().get_token("https://database.windows.net/.default")` on startup.
+  - The resulting token is encoded as `UTF-16LE` bytes with a 4-byte little-endian length prefix.
+  - The token binary is passed directly to `pyodbc.connect()` via `attrs_before={1256: token_struct}`, bypassing all interactive authentication flows entirely.
+  - The `Authentication=...` keyword is stripped from the connection string programmatically to prevent conflicts with the token injection approach.

@@ -55,3 +55,19 @@ export const generateSummary = async (payload) =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+
+export const getCandidates = () => request("/api/candidates");
+
+export const getCandidate = (name) => request(`/api/candidates/${encodeURIComponent(name)}`);
+
+export const saveCandidate = (payload) =>
+  request("/api/candidates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+export const deleteCandidate = (name) =>
+  request(`/api/candidates/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });

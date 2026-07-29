@@ -10,30 +10,44 @@ Handles:
 """
 
 import os
+import sys
 import uuid
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
 import httpx
+from dotenv import load_dotenv
+
+# Ensure the backend directory is in the sys.path so modules like 'db' are always importable
+backend_dir = str(Path(__file__).resolve().parent)
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
+# Load repository-root .env config values before importing other modules
+env_path = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(dotenv_path=env_path)
+
 from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
-from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
+from azure.ai.inference import ChatCompletionsClient
+from azure.ai.inference.models import SystemMessage, UserMessage, JsonSchemaFormat
+from azure.core.credentials import AzureKeyCredential
+from pydantic import ValidationError
 import io
+from db import init_db, save_candidate, list_candidates, get_candidate, delete_candidate
 import docx
 from fpdf import FPDF
 from pypdf import PdfWriter
 
 from cu_backend.profileAnalyser import analyze_url
 
-# Load repository-root .env config values
-env_path = Path(__file__).resolve().parents[1] / ".env"
-load_dotenv(dotenv_path=env_path)
+
 
 app = FastAPI(title="Credential Builder Backend")
 
@@ -78,6 +92,21 @@ class GenerateSummaryRequest(BaseModel):
     summary: str
     coreCompetencies: List[str]
     keyExpertise: List[str]
+
+
+class CredentialSummaryResponse(BaseModel, extra="forbid"):
+    """Structured output schema for the AI-synthesized executive summary."""
+    name: str
+    title: str
+    summary: str
+
+
+class CandidateSaveRequest(BaseModel):
+    name: str
+    title: str
+    profile_picture_url: Optional[str] = None
+    form_data: Dict[str, Any]
+    summary_data: Dict[str, Any]
 
 
 # --- HELPER UTILITIES ---
@@ -383,67 +412,126 @@ def analyze_blob(request: AnalyzeRequest) -> Dict[str, Any]:
 @app.post("/generate-summary")
 async def generate_summary(request: GenerateSummaryRequest) -> Dict[str, Any]:
     """
-    Calls the Azure AI Agent service (via the Azure AI Projects SDK client) to synthesize
-    a high-impact executive summary paragraph from the reviewed candidate parameters.
-    
-    If credentials or connections fail (e.g. in local development), it automatically 
-    falls back to a rule-based formatting utility.
+    Synthesizes a high-impact executive summary using Azure AI Foundry structured outputs.
     """
     try:
-        endpoint = "https://credentialbuilder-trial-resource.services.ai.azure.com/api/projects/credentialbuilder-trial"
-        project_client = AIProjectClient(
-            endpoint=endpoint,
+        inference_endpoint = os.getenv(
+            "AZURE_INFERENCE_ENDPOINT",
+            "https://credentialbuilder-trial-resource.services.ai.azure.com/models",
+        )
+
+        client = ChatCompletionsClient(
+            endpoint=inference_endpoint,
             credential=DefaultAzureCredential(),
         )
-        
-        prompt = (
-            "You are an expert executive resume writer.\n"
-            "Synthesize a professional summary for a candidate using the following details:\n"
-            f"Name: {request.name}\n"
-            f"Title: {request.title}\n"
-            f"Raw Summary: {request.summary}\n"
-            f"Core Competencies: {', '.join(request.coreCompetencies)}\n"
-            f"Key Expertise: {', '.join(request.keyExpertise)}\n\n"
-            "Produce a response in JSON format matching this schema:\n"
-            "{\n"
-            '  "name": "...",\n'
-            '  "title": "...",\n'
-            '  "summary": "..."\n'
-            "}\n"
-            "Ensure the JSON is valid and only return the JSON content."
+
+        # Derive the JSON schema directly from the Pydantic model — no hand-written schema
+        credential_schema = CredentialSummaryResponse.model_json_schema()
+
+        response = client.complete(
+            model="gpt-4o",
+            response_format=JsonSchemaFormat(
+                name="credential_summary",
+                schema=credential_schema,
+                description="Structured executive summary for a professional services candidate",
+                strict=True,
+            ),
+            messages=[
+                SystemMessage(
+                    "You are an expert executive resume writer for a professional services firm. "
+                    "Synthesize a compelling, concise professional summary for the candidate. "
+                    "Return the candidate's name and title exactly as provided. "
+                    "Write the summary in third-person, present tense, 3-5 sentences."
+                ),
+                UserMessage(
+                    f"Name: {request.name}\n"
+                    f"Title: {request.title}\n"
+                    f"Raw Summary: {request.summary}\n"
+                    f"Core Competencies: {', '.join(request.coreCompetencies)}\n"
+                    f"Key Expertise: {', '.join(request.keyExpertise)}"
+                ),
+            ],
         )
-        
-        openai_client = project_client.get_openai_client()
-        response = openai_client.responses.create(
-            input=[{"role": "user", "content": prompt}],
-            extra_body={"agent_reference": {"name": "SummarizingAgent", "version": "1", "type": "agent_reference"}},
-        )
-        
-        output_text = getattr(response, "output_text", "")
-        cleaned_text = clean_json_text(output_text)
-        parsed = json.loads(cleaned_text)
-        
-        if isinstance(parsed, dict) and "summary" in parsed:
-            return {
-                "name": parsed.get("name") or request.name,
-                "title": parsed.get("title") or request.title,
-                "summary": parsed.get("summary")
-            }
+
+        # Parse and validate the structured JSON response against the Pydantic model
+        raw = json.loads(response.choices[0].message.content)
+        parsed = CredentialSummaryResponse.model_validate(raw, strict=True)
+
+        return {
+            "name": parsed.name or request.name,
+            "title": parsed.title or request.title,
+            "summary": parsed.summary,
+        }
+
+    except ValidationError as ve:
+        print(f"Structured output validation failed: {ve}. Falling back to rule-based synthesis.")
     except Exception as exc:
-        print(f"Azure Agent connection failed ({exc}). Falling back to local rule-based synthesis.")
-        
-    # Local fallback rule-based synthesis formatting
+        print(f"Azure inference call failed ({exc}). Falling back to rule-based synthesis.")
+
+    # ── Local rule-based fallback ────────────────────────────────────────────
     comps_str = ", ".join(request.coreCompetencies)
     exp_str = ", ".join(request.keyExpertise)
-    
+
     fallback_summary = request.summary
     if exp_str:
         fallback_summary += f"\n\nSpecialized in: {exp_str}."
     if comps_str:
         fallback_summary += f"\nKey capabilities include: {comps_str}."
-        
+
     return {
         "name": request.name,
         "title": request.title,
-        "summary": fallback_summary
+        "summary": fallback_summary,
     }
+
+
+@app.on_event("startup")
+def startup_event():
+    init_db()
+
+
+@app.get("/api/candidates")
+def get_candidates():
+    try:
+        return list_candidates()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database query failed: {str(e)}")
+
+
+@app.get("/api/candidates/{name}")
+def get_candidate_by_name(name: str):
+    try:
+        candidate = get_candidate(name)
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        return candidate
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database query failed: {str(e)}")
+
+
+@app.post("/api/candidates")
+def save_candidate_endpoint(req: CandidateSaveRequest):
+    if not req.name.strip():
+        raise HTTPException(status_code=400, detail="Candidate name is required")
+    try:
+        save_candidate(
+            name=req.name.strip(),
+            title=req.title.strip(),
+            profile_picture_url=req.profile_picture_url,
+            form_data=req.form_data,
+            summary_data=req.summary_data
+        )
+        return {"status": "success", "message": "Candidate profile saved successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database write failed: {str(e)}")
+
+
+@app.delete("/api/candidates/{name}")
+def delete_candidate_endpoint(name: str):
+    try:
+        delete_candidate(name)
+        return {"status": "success", "message": "Candidate deleted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database deletion failed: {str(e)}")
