@@ -149,9 +149,8 @@ export default function CredentialCard({ summary, pictureUrl }) {
         </div>
       </div>
 
-      {/* ── FOOTER ─────────────────────────────────────────── */}
       <footer className="cc-footer">
-        <span className="cc-footer-text">Horizon Nexus Partners · Prepared for Client Presentation · {new Date().getFullYear()}</span>
+        <span className="cc-footer-text">Horizon Nexus Partners</span>
       </footer>
     </div>
   );

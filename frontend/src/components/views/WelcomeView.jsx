@@ -1,29 +1,37 @@
 /**
- * WelcomeView — landing screen shown when no mode is active.
- * Presents two options: Build Credentials or View & Manage Credentials.
+ * WelcomeView — landing screen styled after the horizonnp.com.au home hero.
  *
- * @param {Function} onBuild - Called when the user selects Build mode.
- * @param {Function} onManage - Called when the user selects Manage mode.
+ * Left: Eyebrow, Heading (Modern. Different.), Subhead, and Pill Outline Buttons.
+ * Right: Stylized large HNP graphic.
  */
 export default function WelcomeView({ onBuild, onManage }) {
   return (
-    <div className="page-card welcome-container">
-      <div className="welcome-header">
-        <h1>Horizon Nexus Partners</h1>
-        <p>Credential Builder &amp; Repository System</p>
-      </div>
-
-      <div className="welcome-grid">
-        <div className="welcome-card card-build" onClick={onBuild}>
-          <div className="welcome-card-icon">📝</div>
-          <h3>Build Credentials</h3>
-          <p>Ingest resumes, extract fields, edit capabilities, and synthesize AI-based candidate summaries.</p>
+    <div className="hnp-hero-container">
+      <div className="hnp-hero-left">
+        <p className="hnp-hero-eyebrow">Horizon Nexus Partners</p>
+        <h1 className="hnp-hero-title">
+          Modern. <span className="hnp-hero-accent">Different.</span>
+        </h1>
+        <p className="hnp-hero-subtitle">
+          We're a partner-led modern professional services firm. Customize and manage your candidate credential cards.
+        </p>
+        <div className="hnp-hero-actions">
+          <button className="hnp-pill-btn" onClick={onBuild}>
+            Build Credentials
+          </button>
+          <button className="hnp-pill-btn" onClick={onManage}>
+            View Repository
+          </button>
         </div>
-
-        <div className="welcome-card card-manage" onClick={onManage}>
-          <div className="welcome-card-icon">🗄️</div>
-          <h3>View &amp; Manage Credentials</h3>
-          <p>Access the repository of all previously generated candidate summaries, view cards, edit records, or delete profiles.</p>
+      </div>
+      <div className="hnp-hero-right">
+        {/* Giant abstract HNP H-watermark graphic */}
+        <div className="hnp-watermark-wrapper">
+          <svg className="hnp-watermark-svg" viewBox="0 0 200 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="20" y="20" width="40" height="200" rx="6" fill="currentColor" />
+            <rect x="140" y="20" width="40" height="200" rx="6" fill="currentColor" />
+            <rect x="60" y="100" width="80" height="40" rx="6" fill="currentColor" />
+          </svg>
         </div>
       </div>
     </div>

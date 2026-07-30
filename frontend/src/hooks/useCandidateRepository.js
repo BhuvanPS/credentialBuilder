@@ -64,7 +64,6 @@ export function useCandidateRepository({
         summary_data: summaryData,
       });
       setSavingStatus('success');
-      setTimeout(() => setSavingStatus('idle'), 3000);
     } catch (err) {
       setError(`Failed to save candidate: ${err.message || err}`);
       setSavingStatus('error');
@@ -86,6 +85,7 @@ export function useCandidateRepository({
         setSummaryReady(true);
         setFiles([]);
         setFileName('');
+        setSavingStatus('success');
         setViewMode('build');
         setActiveStep(2);
         setUnlockedStep(3);
@@ -131,6 +131,7 @@ export function useCandidateRepository({
     setProfilePictureUrl(null);
     setFormData(initialFormData);
     setSummaryReady(false);
+    setSavingStatus('idle');
     setActiveStep(1);
     setUnlockedStep(1);
     setProcessingPhase('idle');

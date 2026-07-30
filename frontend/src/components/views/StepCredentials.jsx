@@ -45,7 +45,7 @@ export default function StepCredentials({
 
         <div className="summary-actions">
           <button
-            className="secondary"
+            className="primary-gold"
             type="button"
             onClick={onGenerateSummary}
             disabled={loading || !formData?.fullName?.value}

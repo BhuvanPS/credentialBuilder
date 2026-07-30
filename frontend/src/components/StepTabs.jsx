@@ -19,8 +19,10 @@ export default function StepTabs({ activeStep, unlockedStep = activeStep, onStep
           onClick={() => onStepClick(step.id)}
           disabled={step.id > unlockedStep}
         >
-          <span className="step-number">{step.id}</span>
-          <span className="step-label">{step.label}</span>
+          <span className="step-label">
+            <span className="step-label-number">0{step.id}</span>
+            <span className="step-label-text">{step.label}</span>
+          </span>
         </button>
       ))}
     </div>

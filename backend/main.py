@@ -10,6 +10,7 @@ Handles:
 """
 
 import os
+import re
 import sys
 import uuid
 import json
@@ -33,7 +34,8 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Any, Dict, List, Optional
-from azure.identity import DefaultAzureCredential
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from openai import OpenAI
 from azure.ai.projects import AIProjectClient
 from azure.ai.inference import ChatCompletionsClient
 from azure.ai.inference.models import SystemMessage, UserMessage, JsonSchemaFormat
@@ -224,38 +226,62 @@ def merge_pdfs(pdf_list: List[bytes]) -> bytes:
 
 
 def generate_meaningful_filename(original_names: List[str], linkedin_url: str = None) -> str:
-    """Generates a meaningful name for merged documents based on uploaded files and LinkedIn url."""
+    """
+    Generates a clean, human-readable filename for merged/single documents.
+
+    Priority order:
+      1. LinkedIn URL slug  (stripped of trailing LinkedIn hash IDs)
+      2. Uploaded resume/CV filename stem
+      3. Any uploaded filename stem
+      4. Generic fallback
+    """
     name_slug = ""
-    
+
+    # --- 1. Extract slug from LinkedIn URL ---
     if linkedin_url:
-        url_parts = [p for p in linkedin_url.split('/') if p.strip()]
-        for i, part in enumerate(url_parts):
-            if part == 'in' and i + 1 < len(url_parts):
-                name_slug = url_parts[i+1].split('?')[0].strip()
-                break
-                
+        match = re.search(r"/in/([^/?#]+)", linkedin_url)
+        if match:
+            raw_slug = match.group(1).strip()
+            # LinkedIn sometimes appends a short alphanumeric hash like "-a1b2c3d4"
+            # Pattern: trailing segment that is 7-10 hex/alnum chars after the last hyphen
+            raw_slug = re.sub(r'-[a-f0-9]{6,10}$', '', raw_slug, flags=re.IGNORECASE)
+            # Also strip query string fragments that may have leaked
+            raw_slug = raw_slug.split('?')[0].split('#')[0].strip()
+            if raw_slug:
+                name_slug = raw_slug
+
+    # --- 2. Fall back to uploaded file name stem ---
     if not name_slug and original_names:
+        # Prefer files whose name contains resume/CV keywords
         keywords = ['resume', 'cv', 'profile', 'bio', 'background', 'credentials']
         primary_name = None
         for filename in original_names:
-            lower_name = filename.lower()
+            lower_name = os.path.splitext(filename)[0].lower()
             if any(kw in lower_name for kw in keywords):
                 primary_name = filename
                 break
         if not primary_name:
             primary_name = original_names[0]
-        if '.' in primary_name:
-            name_slug = '.'.join(primary_name.split('.')[:-1])
-        else:
-            name_slug = primary_name
+        name_slug = os.path.splitext(primary_name)[0]
 
+    # --- 3. Ultimate fallback ---
     if not name_slug:
         name_slug = "candidate_profile"
-        
-    clean_slug = "".join(c for c in name_slug if c.isalnum() or c in ('-', '_', ' ')).strip()
-    clean_slug = clean_slug.replace(' ', '_')
-    
-    return f"{clean_slug}_merged.pdf"
+
+    # --- Normalise the slug ---
+    # Replace hyphens with underscores for consistency
+    name_slug = name_slug.replace('-', '_')
+    # Keep only alphanumeric, underscores, and spaces; strip everything else
+    clean_slug = "".join(c for c in name_slug if c.isalnum() or c in ('_', ' ')).strip()
+    # Collapse multiple underscores/spaces into a single underscore
+    clean_slug = re.sub(r'[_ ]+', '_', clean_slug).strip('_')
+    # Truncate to avoid excessively long blob names
+    clean_slug = clean_slug[:60]
+
+    if not clean_slug:
+        clean_slug = "candidate_profile"
+
+    return f"{clean_slug}_profile.pdf"
 
 
 @app.post("/upload")
@@ -275,10 +301,12 @@ async def upload_documents(
     if linkedin_file_id:
         if linkedin_file_id in uploaded_files:
             processed_pdfs.append(uploaded_files[linkedin_file_id])
-            original_names.append("linkedin_profile.pdf")
+            # Use the actual cached filename (e.g. "john-doe.pdf") not a hardcoded generic name
+            cached_linkedin_name = uploaded_file_names.get(linkedin_file_id, "linkedin_profile.pdf")
+            original_names.append(cached_linkedin_name)
         else:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail="LinkedIn file ID not found in cache"
             )
 
@@ -322,17 +350,23 @@ async def upload_documents(
     if len(processed_pdfs) == 1:
         final_pdf = processed_pdfs[0]
         base_name = original_names[0]
-        if base_name.endswith('.docx'):
-            filename = base_name[:-5] + '.pdf'
+        # Convert docx stem to pdf extension
+        stem, ext = os.path.splitext(base_name)
+        if ext.lower() == '.docx':
+            filename = stem + '.pdf'
+        elif ext.lower() == '.pdf':
+            # If this came from LinkedIn scraper the name is already meaningful (e.g. john-doe.pdf)
+            # Run it through the normaliser so it is consistent with the merged-file path
+            filename = generate_meaningful_filename([base_name], linkedin_url)
         else:
-            filename = base_name
+            filename = generate_meaningful_filename([base_name], linkedin_url)
     else:
         try:
             final_pdf = merge_pdfs(processed_pdfs)
             filename = generate_meaningful_filename(original_names, linkedin_url)
         except Exception as e:
             raise HTTPException(
-                status_code=500, 
+                status_code=500,
                 detail=f"Failed to merge PDF files: {str(e)}"
             )
 
@@ -412,61 +446,90 @@ def analyze_blob(request: AnalyzeRequest) -> Dict[str, Any]:
 @app.post("/generate-summary")
 async def generate_summary(request: GenerateSummaryRequest) -> Dict[str, Any]:
     """
-    Synthesizes a high-impact executive summary using Azure AI Foundry structured outputs.
+    Synthesizes a high-impact executive summary using OpenAI client responses API.
     """
     try:
-        inference_endpoint = os.getenv(
+        endpoint = os.getenv(
             "AZURE_INFERENCE_ENDPOINT",
-            "https://credentialbuilder-trial-resource.services.ai.azure.com/models",
+            "https://credentialbuilder-trial-resource.services.ai.azure.com/openai/v1",
+        )
+        deployment_name = os.getenv(
+            "AZURE_DEPLOYMENT_NAME",
+            "gpt-5.2-475108"
+        )
+        api_key = os.getenv("AZURE_INFERENCE_CREDENTIAL") or os.getenv("OPENAI_API_KEY")
+
+        if api_key:
+            client = OpenAI(
+                base_url=endpoint,
+                api_key=api_key
+            )
+        else:
+            token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://ai.azure.com/.default")
+            client = OpenAI(
+                base_url=endpoint,
+                api_key=token_provider
+            )
+
+        input_prompt = (
+            f"You are an expert executive resume writer for a professional services firm. "
+            f"Synthesize a compelling, concise professional summary for the candidate. "
+            f"Return the candidate's name and title exactly as provided. "
+            f"Write the summary in third-person, present tense, 1-3 sentences.\n\n"
+            f"Candidate Info:\n"
+            f"Name: {request.name}\n"
+            f"Title: {request.title}\n"
+            f"Raw Summary: {request.summary}\n"
+            f"Core Competencies: {', '.join(request.coreCompetencies)}\n"
+            f"Key Expertise: {', '.join(request.keyExpertise)}\n\n"
+            f"You MUST format your response as a valid JSON object matching this schema:\n"
+            f'{{"name": "string", "title": "string", "summary": "string"}}\n'
+            f"Return only the JSON object."
         )
 
-        client = ChatCompletionsClient(
-            endpoint=inference_endpoint,
-            credential=DefaultAzureCredential(),
+        response = client.responses.create(
+            model=deployment_name,
+            input=input_prompt,
         )
 
-        # Derive the JSON schema directly from the Pydantic model — no hand-written schema
-        credential_schema = CredentialSummaryResponse.model_json_schema()
+        output_item = response.output[0]
+        raw_text = ""
+        
+        # Robustly extract content string from output content part (which may be a list of ContentParts)
+        if hasattr(output_item, "content") and getattr(output_item, "content"):
+            content_part = output_item.content
+            if isinstance(content_part, list):
+                parts = []
+                for part in content_part:
+                    if hasattr(part, "text") and getattr(part, "text"):
+                        parts.append(part.text)
+                    elif isinstance(part, dict) and "text" in part:
+                        parts.append(part["text"])
+                    elif isinstance(part, str):
+                        parts.append(part)
+                    else:
+                        parts.append(str(part))
+                raw_text = "".join(parts)
+            else:
+                raw_text = str(content_part)
+        elif hasattr(output_item, "text") and getattr(output_item, "text"):
+            raw_text = output_item.text
+        elif isinstance(output_item, dict):
+            raw_text = output_item.get("content") or output_item.get("text") or str(output_item)
+        else:
+            raw_text = str(output_item)
 
-        response = client.complete(
-            model="gpt-4o",
-            response_format=JsonSchemaFormat(
-                name="credential_summary",
-                schema=credential_schema,
-                description="Structured executive summary for a professional services candidate",
-                strict=True,
-            ),
-            messages=[
-                SystemMessage(
-                    "You are an expert executive resume writer for a professional services firm. "
-                    "Synthesize a compelling, concise professional summary for the candidate. "
-                    "Return the candidate's name and title exactly as provided. "
-                    "Write the summary in third-person, present tense, 3-5 sentences."
-                ),
-                UserMessage(
-                    f"Name: {request.name}\n"
-                    f"Title: {request.title}\n"
-                    f"Raw Summary: {request.summary}\n"
-                    f"Core Competencies: {', '.join(request.coreCompetencies)}\n"
-                    f"Key Expertise: {', '.join(request.keyExpertise)}"
-                ),
-            ],
-        )
-
-        # Parse and validate the structured JSON response against the Pydantic model
-        raw = json.loads(response.choices[0].message.content)
-        parsed = CredentialSummaryResponse.model_validate(raw, strict=True)
+        raw_text = clean_json_text(raw_text)
+        raw = json.loads(raw_text)
 
         return {
-            "name": parsed.name or request.name,
-            "title": parsed.title or request.title,
-            "summary": parsed.summary,
+            "name": raw.get("name") or request.name,
+            "title": raw.get("title") or request.title,
+            "summary": raw.get("summary") or request.summary,
         }
 
-    except ValidationError as ve:
-        print(f"Structured output validation failed: {ve}. Falling back to rule-based synthesis.")
     except Exception as exc:
-        print(f"Azure inference call failed ({exc}). Falling back to rule-based synthesis.")
+        print(f"Azure OpenAI responses inference call failed ({exc}). Falling back to rule-based synthesis.")
 
     # ── Local rule-based fallback ────────────────────────────────────────────
     comps_str = ", ".join(request.coreCompetencies)

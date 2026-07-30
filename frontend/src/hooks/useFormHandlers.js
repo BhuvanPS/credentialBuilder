@@ -30,9 +30,11 @@ export function useFormHandlers({
   setIsDragging,
   setError,
   setProfilePictureUrl,
+  setSavingStatus,
 }) {
   /** Updates a single text list item value by index. */
   const handleListItemChange = (key, index, newValue) => {
+    setSavingStatus?.('idle');
     setFormData((prev) => {
       const list = Array.isArray(prev[key]) ? [...prev[key]] : [];
       list[index] = { value: newValue, confidence: list[index]?.confidence ?? null };
@@ -42,6 +44,7 @@ export function useFormHandlers({
 
   /** Appends an empty item to a list field. */
   const handleAddListItem = (key) => {
+    setSavingStatus?.('idle');
     setFormData((prev) => {
       const list = Array.isArray(prev[key]) ? [...prev[key]] : [];
       return { ...prev, [key]: [...list, { value: '', confidence: null }] };
@@ -50,6 +53,7 @@ export function useFormHandlers({
 
   /** Removes a list item by index. */
   const handleRemoveListItem = (key, index) => {
+    setSavingStatus?.('idle');
     setFormData((prev) => {
       const list = Array.isArray(prev[key]) ? [...prev[key]] : [];
       return { ...prev, [key]: list.filter((_, i) => i !== index) };
@@ -58,6 +62,7 @@ export function useFormHandlers({
 
   /** Updates a skill pool item's value or confidence slider. */
   const handleSkillChange = (key, index, field, value) => {
+    setSavingStatus?.('idle');
     setFormData((prev) => {
       const list = Array.isArray(prev[key]) ? [...prev[key]] : [];
       const item = { ...(list[index] || { value: '', confidence: 1.0 }) };
@@ -74,6 +79,7 @@ export function useFormHandlers({
 
   /** Appends a new skill entry with full confidence. */
   const handleAddSkill = (key) => {
+    setSavingStatus?.('idle');
     setFormData((prev) => {
       const list = Array.isArray(prev[key]) ? [...prev[key]] : [];
       return { ...prev, [key]: [...list, { value: '', confidence: 1.0 }] };
@@ -82,6 +88,7 @@ export function useFormHandlers({
 
   /** Removes a skill entry by index. */
   const handleRemoveSkill = (key, index) => {
+    setSavingStatus?.('idle');
     setFormData((prev) => {
       const list = Array.isArray(prev[key]) ? [...prev[key]] : [];
       return { ...prev, [key]: list.filter((_, i) => i !== index) };
@@ -90,6 +97,7 @@ export function useFormHandlers({
 
   /** Updates a plain text field preserving confidence metadata. */
   const handleTextFieldChange = (key, value) => {
+    setSavingStatus?.('idle');
     setFormData((prev) => ({
       ...prev,
       [key]: { value: value ?? '', confidence: prev[key]?.confidence ?? null },
@@ -120,6 +128,7 @@ export function useFormHandlers({
   const handlePictureChange = (event) => {
     const selectedFile = event.target.files?.[0] ?? null;
     if (selectedFile) {
+      setSavingStatus?.('idle');
       const reader = new FileReader();
       reader.onloadend = () => setProfilePictureUrl(reader.result);
       reader.readAsDataURL(selectedFile);

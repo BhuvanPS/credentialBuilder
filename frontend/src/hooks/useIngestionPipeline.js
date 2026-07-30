@@ -26,6 +26,7 @@ export function useIngestionPipeline({
   setLoading,
   setProcessingPhase,
   setIngestionSource,
+  setSavingStatus,
 }) {
   /**
    * Phase 2–3 background pipeline:
@@ -123,6 +124,7 @@ export function useIngestionPipeline({
     setError('');
     setLoading(true);
     setSummaryReady(false);
+    setSavingStatus?.('idle');
     setActiveStep(3);
     setUnlockedStep((prev) => Math.max(prev, 3));
 

@@ -64,6 +64,7 @@ export default function App() {
     setIsDragging,
     setError,
     setProfilePictureUrl,
+    setSavingStatus,
   });
 
   const pipeline = useIngestionPipeline({
@@ -81,6 +82,7 @@ export default function App() {
     setLoading,
     setProcessingPhase,
     setIngestionSource,
+    setSavingStatus,
   });
 
   const repository = useCandidateRepository({
